@@ -112,7 +112,7 @@ Run the following to build the project:
 mvn verify
 ```
 
-Run the following to install the JARs to Maven Local
+Run the following to install the JARs to the local Maven repository:
 
 ```shell
 mvn install
