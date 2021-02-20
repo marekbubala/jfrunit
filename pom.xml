@@ -40,10 +40,10 @@
     <project.identifier>jfrunit</project.identifier>
     <project.repository>moditect/jfrunit</project.repository>
     <local.repository.path>/tmp/repository</local.repository.path>
-    <layrry.version>${project.version}</layrry.version>
     <java.version>15</java.version>
-    <maven.compiler.source>15</maven.compiler.source>
-    <maven.compiler.target>15</maven.compiler.target>
+    <maven.compiler.source>${java.version}</maven.compiler.source>
+    <maven.compiler.target>${java.version}</maven.compiler.target>
+    <maven.compiler.parameters>true</maven.compiler.parameters>
     <quarkus.platform.version>1.12.1.Final</quarkus.platform.version>
   </properties>
 
@@ -103,7 +103,6 @@
           <header>${rootdir}/etc/license.txt</header>
           <strictCheck>true</strictCheck>
           <excludes>
-            <exclude>*.dot</exclude>
             <exclude>README.md</exclude>
             <exclude>jitpack.yml</exclude>
             <exclude>LICENSE.txt</exclude>
