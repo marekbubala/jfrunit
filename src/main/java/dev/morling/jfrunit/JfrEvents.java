@@ -15,11 +15,16 @@
  */
 package dev.morling.jfrunit;
 
+import dev.morling.jfrunit.EnableEvent.StacktracePolicy;
+import dev.morling.jfrunit.internal.SyncEvent;
+import jdk.jfr.*;
+import jdk.jfr.consumer.RecordedEvent;
+import jdk.jfr.consumer.RecordingFile;
+
 import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.lang.reflect.Method;
-import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -27,21 +32,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-
-import dev.morling.jfrunit.EnableEvent.StacktracePolicy;
-import dev.morling.jfrunit.internal.SyncEvent;
-import jdk.jfr.Configuration;
-import jdk.jfr.EventSettings;
-import jdk.jfr.EventType;
-import jdk.jfr.FlightRecorder;
-import jdk.jfr.Recording;
-import jdk.jfr.consumer.RecordedEvent;
-import jdk.jfr.consumer.RecordingStream;
 
 public class JfrEvents {
 
@@ -50,8 +44,7 @@ public class JfrEvents {
     private Method testMethod;
     private Queue<RecordedEvent> events = new ConcurrentLinkedQueue<>();
     private AtomicLong sequence = new AtomicLong();
-    private AtomicLong watermark = new AtomicLong();
-    private RecordingStream stream;
+    private AtomicLong awaitEventsWatermark = new AtomicLong(-1);
     private Recording recording;
 
     public JfrEvents() {
@@ -64,36 +57,22 @@ public class JfrEvents {
 
         LOGGER.log(Level.INFO, "Starting recording");
 
-        CountDownLatch streamStarted = new CountDownLatch(1);
-
         List<EventConfiguration> allEnabledEventTypes = matchEventTypes(enabledEvents);
 
         try {
             this.testMethod = testMethod;
-            stream = startRecordingStream(configurationName, allEnabledEventTypes, streamStarted);
             recording = startRecording(configurationName, allEnabledEventTypes);
 
-            awaitStreamStart(streamStarted);
-            LOGGER.log(Level.INFO, "Event stream started");
-        }
-        catch (Exception e) {
+            LOGGER.log(Level.INFO, "Recording started");
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
     void stopRecordingEvents() {
-        try {
-            Path dumpDir = Files.createDirectories(Path.of(testMethod.getDeclaringClass().getProtectionDomain().getCodeSource().getLocation().toURI()).getParent().resolve("jfrunit"));
-            LOGGER.log(Level.INFO, "Stop recording: " + dumpDir.resolve(testMethod.getDeclaringClass().getName() + "-" + testMethod.getName() + ".jfr"));
-            recording.stop();
-            recording.dump(dumpDir.resolve(testMethod.getDeclaringClass().getName() + "-" + testMethod.getName() + ".jfr"));
-            recording.close();
-
-            stream.close();
-        }
-        catch (IOException | URISyntaxException e) {
-            throw new RuntimeException(e);
-        }
+        LOGGER.log(Level.INFO, "Stop recording: " + recording.getDestination());
+        recording.stop();
+        recording.close();
     }
 
     /**
@@ -107,13 +86,7 @@ public class JfrEvents {
         event.cause = "awaiting events";
         event.commit();
 
-        while (watermark.get() < seq) {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }
+        awaitEvents(seq);
     }
 
     public void reset() {
@@ -133,31 +106,18 @@ public class JfrEvents {
         return events.stream();
     }
 
-    private void awaitStreamStart(CountDownLatch streamStarted) throws InterruptedException {
-        while(streamStarted.getCount() != 0) {
-            SyncEvent event = new SyncEvent();
-            event.sequence = sequence.incrementAndGet();
-            event.cause = "awaiting stream start";
-            event.begin();
-            event.commit();
-            Thread.sleep(100);
-        }
-    }
-
     private Recording startRecording(String configurationName, List<EventConfiguration> enabledEvents) throws Exception {
         Recording recording;
 
         if (configurationName != null) {
             recording = new Recording(Configuration.getConfiguration(configurationName));
-        }
-        else {
+        } else {
             recording = new Recording();
             for (EventConfiguration enabledEvent : enabledEvents) {
                 EventSettings settings = recording.enable(enabledEvent.name);
                 if (enabledEvent.stackTrace == StacktracePolicy.INCLUDED) {
                     settings.withStackTrace();
-                }
-                else if (enabledEvent.stackTrace == StacktracePolicy.EXCLUDED) {
+                } else if (enabledEvent.stackTrace == StacktracePolicy.EXCLUDED) {
                     settings.withoutStackTrace();
                 }
 
@@ -173,47 +133,14 @@ public class JfrEvents {
 
         recording.enable(SyncEvent.JFRUNIT_SYNC_EVENT_NAME);
 
+        Path dumpDir = Files.createDirectories(Path.of(testMethod.getDeclaringClass().getProtectionDomain().getCodeSource().getLocation().toURI()).getParent().resolve("jfrunit"));
+        dumpDir = Path.of(dumpDir.toString(), "test");
+        recording.setDestination(dumpDir);
+        recording.setToDisk(true);
+        recording.setDumpOnExit(true);
+
         recording.start();
         return recording;
-    }
-
-    private RecordingStream startRecordingStream(String configurationName, List<EventConfiguration> enabledEvents, CountDownLatch streamStarted) throws Exception {
-        RecordingStream stream;
-
-        if (configurationName != null) {
-            stream = new RecordingStream(Configuration.getConfiguration(configurationName));
-        }
-        else {
-            stream = new RecordingStream();
-            for (EventConfiguration enabledEvent : enabledEvents) {
-                EventSettings settings = stream.enable(enabledEvent.name);
-                if (enabledEvent.stackTrace == StacktracePolicy.INCLUDED) {
-                    settings.withStackTrace();
-                }
-                else if (enabledEvent.stackTrace == StacktracePolicy.EXCLUDED) {
-                    settings.withoutStackTrace();
-                }
-
-                if (enabledEvent.threshold != -1) {
-                    settings.withThreshold(Duration.ofMillis(enabledEvent.threshold));
-                }
-            }
-        }
-
-        stream.enable(SyncEvent.JFRUNIT_SYNC_EVENT_NAME);
-
-        stream.onEvent(re -> {
-            if (isSyncEvent(re)) {
-                watermark.set(re.getLong("sequence"));
-                streamStarted.countDown();
-            }
-            else if (!isInternalSleepEvent(re)) {
-                    events.add(re);
-            }
-        });
-
-        stream.startAsync();
-        return stream;
     }
 
     private boolean isSyncEvent(RecordedEvent re) {
@@ -237,12 +164,47 @@ public class JfrEvents {
                         allEvents.add(new EventConfiguration(eventType.getName(), event.stackTrace, event.threshold, event.period));
                     }
                 }
-            }
-            else {
+            } else {
                 allEvents.add(event);
             }
         }
 
         return allEvents;
+    }
+
+    public void awaitEvents(long syncEventSequence) {
+        while (!RecordingState.CLOSED.equals(recording.getState())) {
+            try {
+                recording.dump(recording.getDestination());
+                RecordingFile recordingFile = new RecordingFile(recording.getDestination());
+                boolean out = false;
+                long eventCounter = -1;
+                while (recordingFile.hasMoreEvents()) {
+                    RecordedEvent recordedEvent = recordingFile.readEvent();
+                    eventCounter++;
+                    if (eventCounter <= awaitEventsWatermark.get()) {
+                        continue;
+                    } else {
+                        awaitEventsWatermark.incrementAndGet();
+                    }
+                    consumeEvent(recordedEvent);
+                    if (isSyncEvent(recordedEvent) && syncEventSequence <= recordedEvent.getLong("sequence")) {
+                        out = true;
+                    }
+                }
+                if (out) {
+                    return;
+                }
+                Thread.sleep(100);
+            } catch (IOException | InterruptedException e) {
+                throw new RuntimeException("Failed to read recording.", e);
+            }
+        }
+    }
+
+    private void consumeEvent(RecordedEvent re) {
+        if (!isInternalSleepEvent(re)) {
+            events.add(re);
+        }
     }
 }

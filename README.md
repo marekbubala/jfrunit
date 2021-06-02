@@ -17,9 +17,8 @@ before they manifest as performance regressions in production.
 
 ## Usage
 
-This project requires OpenJDK 15 or later at runtime.
-Support for JDK 11 is on the roadmap, JfrUnit couldn't rely on JFR event stream in this case though, but would have to read JFR events from a recording persisted to disk.
-A PR contributing this change would be very welcomed.
+This fork of the project requires OpenJDK 11 or later at runtime. In order to support JDK 11 however, it will not leverage JFR streaming.
+Please use original version from [moditect](https://github.com/moditect/jfrunit) if you want it optimized for JDK 15 and later.
 
 JfrUnit is not yet available from Maven Central yet;
 in the meantime you can obtain snapshot builds from [JitPack](https://jitpack.io).
@@ -29,7 +28,7 @@ To do so, add the following dependency to your project's _pom.xml_:
 ...
 <dependency>
   <groupId>com.github.moditect</groupId>
-  <artifactId>jfrunit</artifactId>
+  <artifactId>jfrunit-jdk11</artifactId>
   <version>main-SNAPSHOT</version>
 </dependency>
 ...
@@ -41,7 +40,7 @@ Alternatively, build JfrUnit from source (see below) yourself and add the follow
 ...
 <dependency>
   <groupId>dev.morling.jfrunit</groupId>
-  <artifactId>jfrunit</artifactId>
+  <artifactId>jfrunit-jdk11</artifactId>
   <version>1.0-SNAPSHOT</version>
 </dependency>
 ...
@@ -104,7 +103,7 @@ JFR configuration files are located in the _$JAVA_HOME/bin/jfr_ directory.
 
 ## Build
 
-This project requires OpenJDK 14 or later for its build.
+This project requires OpenJDK 11 or later for its build.
 Apache Maven is used for the build.
 Run the following to build the project:
 
